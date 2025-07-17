@@ -32,7 +32,7 @@ BravoBet
 SeguroBet
 Vai de Bet
 BetPix365
-Bolsa de Apostas
+Bolsa de Aposta
 BetBra
 FullTBet
 BRBet
@@ -72,11 +72,11 @@ SeuBet
 4win
 Bigbet
 MeridianBet
--
--
--
--
--
+TivoBet
+JogaoBet
+BetWarrior
+BRXBet
+B2XBet
 -
 -
 -
