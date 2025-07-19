@@ -6,8 +6,6 @@ import json
 from dotenv import load_dotenv
 
 class Config:
-    """Classe que armazena todas as configurações do projeto."""
-    
     PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     load_dotenv(os.path.join(PROJECT_ROOT, '.env'))
     
@@ -19,11 +17,9 @@ class Config:
     API_FOOTBALL_KEY = os.getenv('API_FOOTBALL_KEY')
     GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
     
-    USER_TO_MENTION = os.getenv('USER_TO_MENTION', 'paterrx') 
-    NOTIFICATION_CHANNEL_ID = int(os.getenv('NOTIFICATION_CHANNEL_ID', 0))
-
     DB_PATH = os.path.join(PROJECT_ROOT, 'data', 'bets.db')
     PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'main_prompt.txt')
+    VALIDATION_PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'validation_prompt.txt') # NOVO
     CONTEXT_DIR = os.path.join(os.path.dirname(__file__), 'context')
     MAPPINGS_DIR = PROJECT_ROOT
     SESSION_FILE = os.path.join(PROJECT_ROOT, "bot_session")
@@ -36,8 +32,7 @@ class Config:
 
         try:
             with open(os.path.join(self.PROJECT_ROOT, 'config.json'), 'r', encoding='utf-8') as f:
-                _config_json = json.load(f)
-                self.TELEGRAM_CHANNEL_IDS = _config_json.get('telegram_channel_ids', [])
+                self.TELEGRAM_CHANNEL_IDS = json.load(f).get('telegram_channel_ids', [])
         except FileNotFoundError:
             self.TELEGRAM_CHANNEL_IDS = []
 
