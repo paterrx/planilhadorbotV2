@@ -120,3 +120,5 @@ dmypy.json
 
 # pytype static analyzer
 .pytype/
+
+config.json

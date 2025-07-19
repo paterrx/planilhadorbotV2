@@ -1,5 +1,5 @@
 # Arquivo: app/services/ai_service.py
-# Versão: 10.0 - Lógica de validação em duas etapas e regras de fallback.
+# Versão: 11.1 - Corrigidos os nomes dos métodos para o fluxo de 3 etapas.
 
 import google.generativeai as genai
 import json
@@ -7,10 +7,10 @@ import re
 import logging
 from PIL import Image
 import io
-from app.config import Config
+from app.config import config
 
 class AIService:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: config):
         self.config = cfg
         genai.configure(api_key=self.config.GEMINI_API_KEY)
         self.model = genai.GenerativeModel('gemini-1.5-pro-latest')
@@ -19,9 +19,11 @@ class AIService:
     def _load_prompts(self):
         try:
             with open(self.config.PROMPT_PATH, 'r', encoding='utf-8') as f:
-                self.base_prompt = f.read()
-            with open(self.config.VALIDATION_PROMPT_PATH, 'r', encoding='utf-8') as f:
-                self.validation_prompt = f.read()
+                self.extraction_prompt = f.read()
+            with open(self.config.QUERY_GENERATOR_PROMPT_PATH, 'r', encoding='utf-8') as f:
+                self.query_generator_prompt = f.read()
+            with open(self.config.FINAL_ANALYSIS_PROMPT_PATH, 'r', encoding='utf-8') as f:
+                self.final_analysis_prompt = f.read()
         except FileNotFoundError as e:
             raise RuntimeError(f"ERRO CRÍTICO: Arquivo de prompt não encontrado: {e.filename}")
 
@@ -32,12 +34,14 @@ class AIService:
         json_match = re.search(r'\{.*\}', text, re.DOTALL)
         if json_match:
             return json_match.group(0)
-        return text # Retorna texto original se nenhum JSON for encontrado
+        return text
 
-    async def analyze_message(self, message_text, image_bytes, channel_name):
+    # NOME CORRIGIDO AQUI
+    async def initial_extraction(self, message_text, image_bytes, channel_name):
+        """Etapa 1: Extrai os dados brutos da mensagem."""
         context_lines = [ f"- Tipsters Válidos (usar o nome do canal): {channel_name}" ]
         full_context = "\n".join(context_lines)
-        content = [self.base_prompt, full_context, f"\n\nAgora, analise a seguinte mensagem:\n{message_text or 'Mensagem sem texto.'}"]
+        content = [self.extraction_prompt, full_context, f"\n\nAgora, analise a seguinte mensagem:\n{message_text or 'Mensagem sem texto.'}"]
         
         if image_bytes:
             try: content.append(Image.open(io.BytesIO(image_bytes)))
@@ -48,30 +52,41 @@ class AIService:
             cleaned_text = self._clean_json_response(response.text)
             result = json.loads(cleaned_text)
             
-            # Aplica a regra de fallback do tipster aqui
             if 'data' in result and ('tipster' not in result['data'] or result['data'].get('tipster') is None):
                 result['data']['tipster'] = channel_name
             return result
         except json.JSONDecodeError:
-            logging.error(f"AI Service (Analyze) - JSONDecodeError. Resposta da IA: {cleaned_text}")
+            logging.error(f"AI Service (Extract) - JSONDecodeError. Resposta da IA: {cleaned_text}")
             return {"message_type": "erro_ia", "data": {"error": "JSON inválido na extração"}}
         except Exception as e:
-            logging.error(f"AI Service (Analyze) - Erro na API Gemini: {e}")
+            logging.error(f"AI Service (Extract) - Erro na API Gemini: {e}")
             return {"message_type": "erro_ia", "data": {"error": str(e)}}
 
-    async def validate_bet_data(self, initial_bet_data):
-        logging.info(f"[IA Validação] Verificando dados: {initial_bet_data}")
-        prompt = self.validation_prompt.format(initial_data_json=json.dumps(initial_bet_data, ensure_ascii=False, indent=2))
-        
+    async def generate_search_query(self, initial_bet_data, post_date):
+        """Etapa 2: Gera uma query de busca otimizada."""
+        prompt = self.query_generator_prompt.format(
+            initial_bet_data=json.dumps(initial_bet_data, ensure_ascii=False),
+            post_date=post_date
+        )
+        try:
+            response = self.model.generate_content(prompt)
+            return response.text.strip()
+        except Exception as e:
+            logging.error(f"[AI Service] Erro ao gerar query de busca: {e}")
+            return ""
+
+    async def analyze_search_results(self, initial_bet_data, search_query, search_results, post_date):
+        """Etapa 4: Analisa os resultados da busca e extrai os dados finais."""
+        prompt = self.final_analysis_prompt.format(
+            initial_bet_data=json.dumps(initial_bet_data, ensure_ascii=False),
+            search_query=search_query,
+            search_results=search_results,
+            post_date=post_date
+        )
         try:
             response = self.model.generate_content(prompt)
             cleaned_text = self._clean_json_response(response.text)
-            validation_result = json.loads(cleaned_text)
-            logging.info(f"[IA Validação] Resultado: {validation_result}")
-            return validation_result
-        except json.JSONDecodeError:
-            logging.error(f"AI Service (Validate) - JSONDecodeError. Resposta da IA: {cleaned_text}")
-            return {"partida_encontrada": False, "error": "JSON inválido na validação"}
+            return json.loads(cleaned_text)
         except Exception as e:
-            logging.error(f"AI Service (Validate) - Erro na API Gemini: {e}")
-            return {"partida_encontrada": False, "error": str(e)}
+            logging.error(f"[AI Service] Erro ao analisar resultados da busca: {e}")
+            return {"partida_encontrada": False}
