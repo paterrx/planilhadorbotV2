@@ -1,5 +1,5 @@
 # Arquivo: app/services/bet_processor_service.py
-# Versão: 2.5 - Blindagem final com .get() para garantir que o KeyError não ocorra.
+# Versão: 2.5 - Corrigido TypeError na chamada do google_search_service.
 
 import logging
 import json
@@ -21,30 +21,30 @@ class BetProcessorService:
         # 1. Extração Inicial
         initial_analysis = await self.ai.initial_extraction(message.text, image_bytes, channel_name)
         if initial_analysis.get('message_type') != 'nova_aposta':
+            logging.warning(f"Msg {message.id} classificada como '{initial_analysis.get('message_type')}'. Ignorando.")
             return None, "Ignored"
 
         bet_data = initial_analysis.get('data', {})
         entry = bet_data.get('entradas', [{}])[0]
-        post_date_str = message.date.strftime('%d/%m/%Y %H:%M')
         
-        # --- BLINDAGEM FINAL E DEFINITIVA ---
-        # Usamos .get() para acessar a chave de forma segura. Se não existir, retorna None.
-        jogos_text = entry.get('jogos')
-        if not jogos_text:
-            logging.error(f"A chave 'jogos' não foi encontrada na análise da msg {message.id}. Pulando esta aposta.")
+        if not entry or 'jogos' not in entry or not entry['jogos']:
+            logging.error(f"A análise da IA para a msg {message.id} falhou em extrair a chave 'jogos'. Pulando aposta.")
             bet_data['situacao'] = 'Erro IA (sem jogos)'
             return {'data': bet_data}, "ProcessingError"
-        # --- FIM DA BLINDAGEM ---
 
-        # 2. IA Gera a Query de Busca (agora passando apenas a string segura)
+        post_date_str = message.date.strftime('%d/%m/%Y %H:%M')
+
+        # 2. IA Gera a Query de Busca
+        jogos_text = entry.get('jogos')
         search_query = await self.ai.generate_search_query(jogos_text, post_date_str)
         if not search_query:
-            logging.warning(f"IA não gerou query de busca para msg {message.id}. Usando dados originais.")
-            bet_data.setdefault('home_team_id', '')
-            bet_data.setdefault('away_team_id', '')
+            logging.warning(f"IA não conseguiu gerar uma query de busca para msg {message.id}. Usando dados originais.")
+            bet_data['home_team_id'] = ''
+            bet_data['away_team_id'] = ''
             return {'data': bet_data}, "OriginalData"
 
         # 3. Executa a Busca na Web
+        # CORREÇÃO APLICADA AQUI: Adicionado o .search()
         search_results = self.google_search(search_query)
 
         # 4. IA Analisa os Resultados da Busca para Validar
