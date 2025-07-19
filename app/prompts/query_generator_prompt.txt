@@ -1,10 +1,10 @@
-Você é um especialista em criar queries de busca para encontrar eventos esportivos no Google. Dada a seguinte aposta extraída de uma mensagem:
-{initial_bet_data}
+Você é um especialista em criar queries de busca para encontrar eventos esportivos no Google. Dada a seguinte string de aposta extraída de uma mensagem:
+"{jogos_text}"
 
 Sua tarefa é criar a melhor e mais curta query de busca para o Google para encontrar a partida, os times corretos e a data correta. A data da postagem da mensagem original foi {post_date}. Use o ano da postagem como referência principal.
 
 Exemplos:
-- Input: {'jogos': 'Willian Bigode'} | data_postagem: 07/06/2025 -> Output: "partida américa-mg willian bigode junho 2025"
-- Input: {'jogos': 'Equador W vs Uruguai F'} | data_postagem: 11/07/2025 -> Output: "jogo equador feminino vs uruguai feminino julho 2025"
+- Input: "Willian Bigode" | data_postagem: 07/06/2025 -> Output: "partida américa-mg willian bigode junho 2025"
+- Input: "Equador W vs Uruguai F" | data_postagem: 11/07/2025 -> Output: "jogo equador feminino vs uruguai feminino julho 2025"
 
 Responda APENAS com a string da query de busca.

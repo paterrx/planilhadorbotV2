@@ -1,5 +1,5 @@
 # Arquivo: app/services/bet_processor_service.py
-# Versão: 2.4 - Lógica final à prova de falhas, com tratamento de KeyError.
+# Versão: 2.5 - Blindagem final com .get() para garantir que o KeyError não ocorra.
 
 import logging
 import json
@@ -21,35 +21,27 @@ class BetProcessorService:
         # 1. Extração Inicial
         initial_analysis = await self.ai.initial_extraction(message.text, image_bytes, channel_name)
         if initial_analysis.get('message_type') != 'nova_aposta':
-            logging.warning(f"Msg {message.id} classificada como '{initial_analysis.get('message_type')}'. Ignorando.")
             return None, "Ignored"
 
         bet_data = initial_analysis.get('data', {})
+        entry = bet_data.get('entradas', [{}])[0]
+        post_date_str = message.date.strftime('%d/%m/%Y %H:%M')
         
-        # --- BLINDAGEM REFORÇADA ---
-        # Garante que a estrutura mínima exista antes de prosseguir.
-        if not bet_data or 'entradas' not in bet_data or not bet_data['entradas']:
-            logging.error(f"A análise da IA para a msg {message.id} retornou sem o campo 'entradas'. Pulando.")
-            # Retorna um objeto de aposta mínimo para evitar que a escrita na planilha quebre
-            bet_data['situacao'] = 'Erro IA'
+        # --- BLINDAGEM FINAL E DEFINITIVA ---
+        # Usamos .get() para acessar a chave de forma segura. Se não existir, retorna None.
+        jogos_text = entry.get('jogos')
+        if not jogos_text:
+            logging.error(f"A chave 'jogos' não foi encontrada na análise da msg {message.id}. Pulando esta aposta.")
+            bet_data['situacao'] = 'Erro IA (sem jogos)'
             return {'data': bet_data}, "ProcessingError"
-            
-        entry = bet_data['entradas'][0]
-
-        if 'jogos' not in entry or not entry['jogos']:
-             logging.error(f"A análise da IA para a msg {message.id} retornou sem a chave 'jogos'. Pulando.")
-             bet_data['situacao'] = 'Erro IA'
-             return {'data': bet_data}, "ProcessingError"
         # --- FIM DA BLINDAGEM ---
 
-        post_date_str = message.date.strftime('%d/%m/%Y %H:%M')
-
-        # 2. IA Gera a Query de Busca
-        search_query = await self.ai.generate_search_query(entry, post_date_str)
+        # 2. IA Gera a Query de Busca (agora passando apenas a string segura)
+        search_query = await self.ai.generate_search_query(jogos_text, post_date_str)
         if not search_query:
-            logging.warning(f"IA não conseguiu gerar uma query de busca para msg {message.id}.")
-            bet_data['home_team_id'] = ''
-            bet_data['away_team_id'] = ''
+            logging.warning(f"IA não gerou query de busca para msg {message.id}. Usando dados originais.")
+            bet_data.setdefault('home_team_id', '')
+            bet_data.setdefault('away_team_id', '')
             return {'data': bet_data}, "OriginalData"
 
         # 3. Executa a Busca na Web

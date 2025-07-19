@@ -1,5 +1,5 @@
 # Arquivo: app/services/ai_service.py
-# Versão: 11.1 - Corrigidos os nomes dos métodos para o fluxo de 3 etapas.
+# Versão: 11.2 - Ajustada a assinatura do generate_search_query para maior robustez.
 
 import google.generativeai as genai
 import json
@@ -36,9 +36,7 @@ class AIService:
             return json_match.group(0)
         return text
 
-    # NOME CORRIGIDO AQUI
     async def initial_extraction(self, message_text, image_bytes, channel_name):
-        """Etapa 1: Extrai os dados brutos da mensagem."""
         context_lines = [ f"- Tipsters Válidos (usar o nome do canal): {channel_name}" ]
         full_context = "\n".join(context_lines)
         content = [self.extraction_prompt, full_context, f"\n\nAgora, analise a seguinte mensagem:\n{message_text or 'Mensagem sem texto.'}"]
@@ -62,10 +60,10 @@ class AIService:
             logging.error(f"AI Service (Extract) - Erro na API Gemini: {e}")
             return {"message_type": "erro_ia", "data": {"error": str(e)}}
 
-    async def generate_search_query(self, initial_bet_data, post_date):
-        """Etapa 2: Gera uma query de busca otimizada."""
+    async def generate_search_query(self, jogos_text, post_date):
+        """Etapa 2: Gera uma query de busca otimizada a partir de um texto simples."""
         prompt = self.query_generator_prompt.format(
-            initial_bet_data=json.dumps(initial_bet_data, ensure_ascii=False),
+            jogos_text=jogos_text,
             post_date=post_date
         )
         try:
