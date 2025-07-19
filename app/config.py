@@ -17,9 +17,13 @@ class Config:
     API_FOOTBALL_KEY = os.getenv('API_FOOTBALL_KEY')
     GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
     
+    # NOVA VARIÁVEL: Define quantas horas um jogo deve ter terminado antes de buscarmos o resultado.
+    # Padrão é 2.5 horas. Você pode diminuir este valor no Railway para ser mais agressivo.
+    RESULT_CHECK_HOURS_AGO = float(os.getenv('RESULT_CHECK_HOURS_AGO', 2.5))
+    
     DB_PATH = os.path.join(PROJECT_ROOT, 'data', 'bets.db')
     PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'main_prompt.txt')
-    VALIDATION_PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'validation_prompt.txt') # NOVO
+    VALIDATION_PROMPT_PATH = os.path.join(os.path.dirname(__file__), 'prompts', 'validation_prompt.txt')
     CONTEXT_DIR = os.path.join(os.path.dirname(__file__), 'context')
     MAPPINGS_DIR = PROJECT_ROOT
     SESSION_FILE = os.path.join(PROJECT_ROOT, "bot_session")
