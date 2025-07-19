@@ -1,5 +1,5 @@
 # Arquivo: app/services/api_football_service.py
-# Versão: 7.5 - Lógica final para interpretar nomes de times, datas e com debug aprimorado.
+# Versão: 8.0 - Lógica de busca de partidas robusta com intervalo de datas para resolver problemas de fuso horário.
 
 import requests
 import re
@@ -99,14 +99,19 @@ class ApiFootballService:
         if clean_name in self.team_mappings and self.team_mappings.get(clean_name) is not None:
             return self.team_mappings[clean_name]
         
-        # Usa a IA para obter o nome padronizado ANTES da busca
+        # Estratégia 1: Usa a IA para obter o nome padronizado
         standardized_name = await self._get_standardized_name_with_ai(clean_name)
         print(f"  -> Nome original '{clean_name}' padronizado para busca como: '{standardized_name}'")
         
         found_team = await self._search_team_on_api(standardized_name)
 
+        # Estratégia 2 (Fallback): Se a IA falhar, tenta com o nome limpo simples
+        if not found_team and standardized_name != clean_name:
+            print(f"  -> Fallback: Nenhum resultado para '{standardized_name}'. Tentando com '{clean_name}'...")
+            found_team = await self._search_team_on_api(clean_name)
+
         if not found_team:
-            print(f"  -> Nenhum resultado na API para '{standardized_name}'.")
+            print(f"  -> Nenhum resultado na API para '{clean_name}' ou suas variações.")
             self.team_mappings[clean_name] = None
             self._save_team_mappings()
             return None
@@ -135,23 +140,38 @@ class ApiFootballService:
         if not all([home_id, away_id, event_date_str]): return None, "InvalidInput"
         try:
             parsed_date_str = self._parse_relative_date(event_date_str)
-            event_date = datetime.strptime(parsed_date_str.split(" ")[0], '%d/%m/%Y')
+            base_date = datetime.strptime(parsed_date_str.split(" ")[0], '%d/%m/%Y')
         except (ValueError, IndexError):
             print(f"  -> Data do evento '{event_date_str}' inválida.")
             return None, "InvalidDate"
-        try:
-            params = {'date': event_date.strftime('%Y-%m-%d'), 'team': home_id}
-            response = await asyncio.get_running_loop().run_in_executor(
-                None, lambda: requests.get(f"{self.base_url}fixtures", headers=self.headers, params=params, timeout=20)
-            )
-            response.raise_for_status()
-            for fixture in response.json().get('response', []):
-                if fixture['teams']['away']['id'] == away_id:
-                    return fixture, "Success"
-            return None, "MatchNotFound"
-        except requests.exceptions.RequestException as e:
-            print(f"  -> [API] Erro na requisição ao buscar por IDs: {e}")
-            return None, "ApiError"
+
+        # NOVA LÓGICA: Busca na data exata, no dia anterior e no dia seguinte para cobrir fusos horários.
+        date_range_to_check = [
+            base_date,
+            base_date - timedelta(days=1),
+            base_date + timedelta(days=1)
+        ]
+
+        for event_date in date_range_to_check:
+            date_for_api = event_date.strftime('%Y-%m-%d')
+            print(f"     -> DEBUG: Procurando partida com IDs {home_id} vs {away_id} na data {date_for_api}")
+            try:
+                params = {'date': date_for_api, 'team': home_id}
+                response = await asyncio.get_running_loop().run_in_executor(
+                    None, lambda: requests.get(f"{self.base_url}fixtures", headers=self.headers, params=params, timeout=20)
+                )
+                response.raise_for_status()
+                for fixture in response.json().get('response', []):
+                    if fixture['teams']['away']['id'] == away_id:
+                        print(f"       -> SUCESSO: Partida encontrada na data {date_for_api}.")
+                        return fixture, "Success"
+            except requests.exceptions.RequestException as e:
+                print(f"  -> [API] Erro na requisição ao buscar por IDs na data {date_for_api}: {e}")
+                # Não retorna aqui, continua para a próxima data do loop
+        
+        print(f"     -> Partida não encontrada no intervalo de 3 dias para os IDs {home_id} vs {away_id}.")
+        return None, "MatchNotFound"
+
 
     async def find_match_by_name(self, event_description: str, event_date_str: str):
         parsed_teams, reason = self._parse_event(event_description)

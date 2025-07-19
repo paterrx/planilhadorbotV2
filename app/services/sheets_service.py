@@ -1,5 +1,5 @@
 # Arquivo: app/services/sheets_service.py
-# Versão: 10.2 - Lógica final com get_pending_bets e abas mensais.
+# Versão: 11.0 - Funções de escrita refatoradas para aceitar um dicionário de aposta já enriquecido.
 
 import json
 from datetime import datetime, timedelta
@@ -72,7 +72,6 @@ class SheetsService:
             data = all_values[1:]
             
             df = pd.DataFrame(data, columns=header)
-            # Adiciona o índice original para referência posterior
             df['original_index'] = df.index
             return df
         except gspread.exceptions.WorksheetNotFound:
@@ -83,7 +82,6 @@ class SheetsService:
             return pd.DataFrame()
 
     def get_pending_bets(self):
-        """Busca apostas pendentes da aba do mês atual que já deveriam ter ocorrido."""
         worksheet_name = self._get_current_month_worksheet_name()
         all_bets = self.get_all_bets_from_worksheet(worksheet_name)
         if all_bets.empty: return None
@@ -139,7 +137,7 @@ class SheetsService:
         value_str = str(value or '')
         return "'" + value_str if value_str.startswith("=") else value_str
 
-    def _format_json_to_row_data(self, bet_json, message_link, home_id, away_id, existing_bet_id=None, existing_status=None):
+    def _format_json_to_row_data(self, bet_json, message_link, existing_bet_id=None, existing_status=None):
         bet_info = bet_json.get('data', bet_json)
         if not bet_info: return None
         
@@ -170,15 +168,16 @@ class SheetsService:
             'Bet ID': bet_id,
             'Message Link': message_link,
             'Data Completa': data_evento_str,
-            'Home Team ID': home_id,
-            'Away Team ID': away_id
+            'Home Team ID': bet_info.get('home_team_id'), # Busca o ID do dicionário
+            'Away Team ID': bet_info.get('away_team_id')  # Busca o ID do dicionário
         }
         
         return {k: self._format_value(v) for k, v in row_data.items()}
 
-    def write_bet(self, bet_json, message_link, home_id, away_id):
+    def write_bet(self, bet_json, message_link):
         worksheet = self.get_worksheet()
-        row_data = self._format_json_to_row_data(bet_json, message_link, home_id, away_id)
+        # A função agora só precisa do JSON enriquecido e do link
+        row_data = self._format_json_to_row_data(bet_json, message_link)
         if not row_data: return
 
         ordered_row = [row_data.get(h, '') for h in self.EXPECTED_HEADER]
