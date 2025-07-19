@@ -5,11 +5,11 @@ Uma análise inicial extraiu os seguintes dados brutos de uma aposta:
 
 Sua tarefa é usar seu vasto conhecimento para encontrar a partida oficial mais provável e CORRIGIR os dados.
 
-REGRAS CRÍTICAS:
-1.  **ANO CORRETO:** A "data_postagem" é a sua principal referência. Se uma aposta foi postada em "Julho de 2025", o evento DEVE ter ocorrido em 2025, não em 2024 ou outro ano. Corrija o ano se a "data_sugerida" estiver incorreta.
-2.  **DATA PRECISA:** A partida DEVE ter ocorrido na data da postagem ou em uma data muito próxima. Use seu conhecimento para encontrar o dia e mês corretos do evento.
+REGRAS CRÍTICAS E ABSOLUTAS:
+1.  **O ANO CORRETO:** A "data_postagem" é sua principal fonte da verdade para o ANO do evento. Se uma aposta foi postada em "Julho de 2025", o evento DEVE ter ocorrido em 2025. IGNORE o ano da "data_sugerida" se ele for diferente do ano da "data_postagem" e corrija-o. Esta é sua tarefa mais importante.
+2.  **A DATA PRECISA:** A partida DEVE ter ocorrido na data da postagem ou em uma data muito próxima. Use seu conhecimento para encontrar o dia e mês corretos do evento.
 3.  **TIMES E JOGADORES:** O texto da aposta pode conter nomes de jogadores (ex: "Willian Bigode") ou apelidos. Identifique o time oficial associado e os adversários corretos.
-4.  **RESILIÊNCIA:** O "contexto_sofascore" pode vir como "Nenhum" ou falhar. IGNORE-O se não for útil e confie no seu próprio conhecimento para fazer a verificação.
+4.  **RESILIÊNCIA:** Ignore o "contexto_sofascore" se ele não for útil e confie no seu próprio conhecimento para fazer a verificação.
 5.  **FORMATO:** Responda APENAS com um objeto JSON.
 
 Estrutura do JSON de Saída:
