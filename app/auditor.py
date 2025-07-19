@@ -1,5 +1,5 @@
 # Arquivo: app/auditor.py
-# Versão: 13.0 - Refatorado para usar o BetProcessorService centralizado.
+# Versão: 13.1 - Corrigida a instanciação do BetProcessorService.
 
 import asyncio
 import logging
@@ -15,13 +15,15 @@ from app.config import config
 from app.services.ai_service import AIService
 from app.services.sheets_service import SheetsService
 from app.services.api_football_service import ApiFootballService
-from app.services.sofascore_service import SofascoreService
+from app.services.google_search_service import GoogleSearchService
 from app.services.bet_processor_service import BetProcessorService
 
 class Auditor:
     def __init__(self, cfg, sheets_svc, processor):
-        if cfg.TELETHON_SESSION_STRING: session = StringSession(cfg.TELETHON_SESSION_STRING)
-        else: session = cfg.SESSION_FILE
+        if cfg.TELETHON_SESSION_STRING: 
+            session = StringSession(cfg.TELETHON_SESSION_STRING)
+        else: 
+            session = cfg.SESSION_FILE
         self.client = TelegramClient(session, int(cfg.TELEGRAM_API_ID), cfg.TELEGRAM_API_HASH)
         self.sheets = sheets_svc
         self.processor = processor
@@ -83,7 +85,6 @@ class Auditor:
 
         if reconstructed_rows:
             reconstructed_df = pd.DataFrame(reconstructed_rows)
-            # Garante que a coluna 'Bet ID' seja a primeira, se ela existir
             if 'Bet ID' in reconstructed_df.columns:
                 cols = ['Bet ID'] + [col for col in reconstructed_df.columns if col != 'Bet ID']
                 reconstructed_df = reconstructed_df[cols]
@@ -96,13 +97,13 @@ async def main():
     sheets_svc = SheetsService(config)
     ai_svc = AIService(config)
     api_football_svc = ApiFootballService(config, ai_svc)
-    sofascore_svc = SofascoreService()
-    processor_svc = BetProcessorService(ai_svc, api_football_svc, sofascore_svc)
+    google_search_svc = GoogleSearchService()
+    processor_svc = BetProcessorService(ai_svc, api_football_svc, google_search_svc)
     
     auditor = Auditor(config, sheets_svc, processor_svc)
     
     aba_para_auditar = sheets_svc._get_current_month_worksheet_name()
-    logging.info(f"Iniciando Auditor Reconstrutor v13.0 na aba '{aba_para_auditar}'...")
+    logging.info(f"Iniciando Auditor Reconstrutor v13.1 na aba '{aba_para_auditar}'...")
     await auditor.run_reconstruction(aba_para_auditar)
 
 if __name__ == "__main__":

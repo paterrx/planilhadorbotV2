@@ -1,44 +1,50 @@
 # Arquivo: app/services/bet_processor_service.py
-# Versão: 1.1 - Resiliente à falha do Sofascore.
+# Versão: 2.1 - Corrigido erro de sintaxe e nomes de variáveis.
 
 import logging
+import json
 from telethon.tl.custom import Message
 from app.services.ai_service import AIService
 from app.services.api_football_service import ApiFootballService
-from app.services.sofascore_service import SofascoreService
+from app.services.google_search_service import GoogleSearchService
 
 class BetProcessorService:
-    def __init__(self, ai: AIService, api_football: ApiFootballService, sofascore: SofascoreService):
+    def __init__(self, ai: AIService, api_football: ApiFootballService, google_search: GoogleSearchService):
         self.ai = ai
         self.api_football = api_football
-        self.sofascore = sofascore
+        self.google_search = google_search
 
     async def process_message(self, message: Message, channel_name: str):
         logging.info(f"Iniciando processamento para msg ID {message.id} do canal '{channel_name}'")
         image_bytes = await message.download_media(file=bytes) if message.photo else None
 
-        initial_analysis = await self.ai.analyze_message(message.text, image_bytes, channel_name)
+        # 1. Extração Inicial
+        initial_analysis = await self.ai.initial_extraction(message.text, image_bytes, channel_name)
         if initial_analysis.get('message_type') != 'nova_aposta':
             logging.warning(f"Msg {message.id} classificada como '{initial_analysis.get('message_type')}'. Ignorando.")
             return None, "Ignored"
 
         bet_data = initial_analysis.get('data', {})
         entry = bet_data.get('entradas', [{}])[0]
-        
-        # Tenta obter contexto do Sofascore, mas não depende mais dele
-        jogos_brutos = entry.get('jogos_concatenados', entry.get('jogos', ''))
-        sofascore_context = self.sofascore.get_team_details_from_search(jogos_brutos.split(' vs ')[0])
-        
-        data_to_validate = {
-            "texto_original_aposta": entry,
-            "data_postagem": message.date.strftime('%d/%m/%Y %H:%M'),
-            "contexto_sofascore": sofascore_context or "Nenhum contexto adicional encontrado."
-        }
-        
-        validated_data = await self.ai.validate_bet_data(data_to_validate)
+        post_date_str = message.date.strftime('%d/%m/%Y %H:%M')
 
+        # 2. IA Gera a Query de Busca
+        search_query = await self.ai.generate_search_query(entry, post_date_str)
+        if not search_query:
+            logging.warning("IA não conseguiu gerar uma query de busca. Usando dados originais.")
+            bet_data['home_team_id'] = ''
+            bet_data['away_team_id'] = ''
+            return {'data': bet_data}, "OriginalData"
+
+        # 3. Executa a Busca na Web
+        search_results = self.google_search(search_query)
+
+        # 4. IA Analisa os Resultados da Busca para Validar
+        validated_data = await self.ai.analyze_search_results(entry, search_query, search_results, post_date_str)
+
+        # 5. Enriquecimento Final
         if validated_data and validated_data.get("partida_encontrada"):
-            logging.info(f"Validação da IA bem-sucedida para msg {message.id}. Atualizando dados.")
+            logging.info(f"Validação via Pesquisa Ativa bem-sucedida para msg {message.id}.")
             bet_data['data_evento_completa'] = f"{validated_data['data_oficial']} {validated_data.get('hora_oficial', '12:00')}"
             jogos_corrigidos = f"{validated_data['time_casa_oficial']} vs {validated_data['time_visitante_oficial']}"
             entry['jogos'] = jogos_corrigidos
@@ -54,7 +60,7 @@ class BetProcessorService:
                 bet_data['away_team_id'] = "NAO_ENCONTRADO_API"
                 logging.warning(f"Partida validada pela IA não encontrada na API-Football (Msg ID: {message.id}). Razão: {reason}")
         else:
-            logging.warning(f"Validação da IA falhou para msg {message.id}. Planilhando com dados originais.")
+            logging.warning(f"Pesquisa Ativa falhou para msg {message.id}. Usando dados originais.")
             bet_data['home_team_id'] = ''
             bet_data['away_team_id'] = ''
         

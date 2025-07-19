@@ -1,5 +1,5 @@
 # Arquivo: app/main.py
-# Versão: 14.2 - Corrigido o bug no supervisor de config para atualização de canais.
+# Versão: 14.3 - Corrigida a instanciação do BetProcessorService.
 
 import asyncio
 import logging
@@ -15,13 +15,14 @@ from app.services.db_service import DbService
 from app.services.ai_service import AIService
 from app.services.sheets_service import SheetsService
 from app.services.api_football_service import ApiFootballService
-from app.services.sofascore_service import SofascoreService
+from app.services.google_search_service import GoogleSearchService
 from app.services.bet_processor_service import BetProcessorService
 
 # --- Lógica de Gerenciamento Dinâmico de Canais ---
 current_monitored_channels = set()
 
 def load_channels_from_config():
+    """Lê o arquivo config.json e retorna a lista de IDs de canais."""
     config_path = os.path.join(config.PROJECT_ROOT, 'config.json')
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -32,6 +33,7 @@ def load_channels_from_config():
         return set()
 
 async def config_reloader_task(client: TelegramClient):
+    """Tarefa que roda em segundo plano para verificar mudanças no config.json."""
     global current_monitored_channels
     logging.info("[Supervisor] Iniciado. Verificando config.json a cada 60 segundos.")
     
@@ -60,8 +62,8 @@ db = DbService(config)
 ai = AIService(config)
 sheets = SheetsService(config)
 api_football = ApiFootballService(config, ai)
-sofascore = SofascoreService()
-processor = BetProcessorService(ai, api_football, sofascore)
+google_search_svc = GoogleSearchService()
+processor = BetProcessorService(ai, api_football, google_search_svc)
 
 # --- Cliente Telethon ---
 if not config.TELETHON_SESSION_STRING:
@@ -86,7 +88,7 @@ async def handle_new_message(event):
     logging.info(f"--- Processamento da Mensagem {message_id} Concluído ---")
 
 async def main():
-    logging.info("Iniciando o PlanilhadorBot v14.2 (Supervisor Corrigido)...")
+    logging.info("Iniciando o PlanilhadorBot v14.3 (Supervisor Corrigido)...")
     db.setup_database()
     
     # Adiciona os handlers iniciais
