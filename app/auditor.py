@@ -1,5 +1,5 @@
 # Arquivo: app/auditor.py
-# Versão: 13.1 - Corrigida a instanciação do BetProcessorService.
+# Versão: Final - Sem limite de lote, focado na aba "APOSTAS".
 
 import asyncio
 import logging
@@ -38,7 +38,7 @@ class Auditor:
                     msg_id = int(match.group(2))
                     return await self.client.get_messages(channel_id, ids=msg_id)
             except (ValueError, MessageIdInvalidError):
-                logging.warning(f"Link inválido ou mensagem não encontrada para o link: {link}")
+                logging.warning(f"Link inválido ou mensagem não encontrada: {link}")
             except Exception as e:
                 logging.error(f"Erro inesperado ao buscar por link {link}: {e}")
         return None
@@ -47,48 +47,51 @@ class Auditor:
         logging.info("Conectando ao Telegram para auditoria...")
         await self.client.connect()
         
-        original_df = self.sheets.get_all_bets_from_worksheet(source_worksheet_name)
-        if original_df.empty:
+        all_records = self.sheets.get_all_records_from_worksheet(source_worksheet_name)
+        if not all_records:
             logging.error(f"A aba de origem '{source_worksheet_name}' está vazia. Encerrando.")
             await self.client.disconnect()
             return
-            
+        
+        original_df = pd.DataFrame(all_records)
         reconstructed_rows = []
-        unique_bets_df = original_df.drop_duplicates(subset='Bet ID', keep='first').copy()
+        
+        logging.info(f"Iniciando auditoria de {len(original_df)} apostas da aba '{source_worksheet_name}'...")
 
-        for index, bet_row in unique_bets_df.iterrows():
+        for index, bet_row in original_df.iterrows():
             bet_id = bet_row.get('Bet ID')
             if not bet_id: continue
             
             logging.info(f"Auditando Bet ID {bet_id}...")
-            original_message = await self.find_original_message(bet_row)
             
-            if not original_message:
-                logging.warning(f"  -> Mensagem não encontrada para Bet ID {bet_id}. Mantendo dados originais.")
-                reconstructed_rows.append(bet_row.to_dict())
-                continue
+            try:
+                original_message = await self.find_original_message(bet_row)
+                if not original_message:
+                    logging.warning(f"  -> Mensagem não encontrada para Bet ID {bet_id}. Mantendo dados originais.")
+                    reconstructed_rows.append(bet_row.to_dict())
+                    continue
 
-            processed_bet, status = await self.processor.process_message(original_message, original_message.chat.title)
+                processed_bet, status = await self.processor.process_message(original_message, original_message.chat.title)
 
-            if status == "Success" and processed_bet:
-                message_link = f"https://t.me/c/{str(original_message.chat_id).replace('-100', '')}/{original_message.id}"
-                row_data = self.sheets._format_json_to_row_data(
-                    processed_bet, message_link,
-                    existing_bet_id=bet_id,
-                    existing_status=bet_row.get('Situação', 'Pendente')
-                )
-                reconstructed_rows.append(row_data)
-                logging.info(f"  -> Bet ID {bet_id} re-analisado e corrigido.")
-            else:
-                logging.warning(f"  -> Re-análise falhou para Bet ID {bet_id}. Mantendo dados originais.")
+                if status == "Success" and processed_bet:
+                    message_link = f"https://t.me/c/{str(original_message.chat_id).replace('-100', '')}/{original_message.id}"
+                    row_data = self.sheets._format_json_to_row_data(
+                        processed_bet, message_link,
+                        existing_bet_id=bet_id,
+                        existing_status=bet_row.get('Situação', 'Pendente')
+                    )
+                    reconstructed_rows.append(row_data)
+                    logging.info(f"  -> Bet ID {bet_id} re-analisado e corrigido.")
+                else:
+                    logging.warning(f"  -> Re-análise falhou para Bet ID {bet_id}. Mantendo dados originais.")
+                    reconstructed_rows.append(bet_row.to_dict())
+            except Exception as e:
+                logging.error(f"  -> Erro crítico ao auditar Bet ID {bet_id}: {e}. Mantendo dados originais.")
                 reconstructed_rows.append(bet_row.to_dict())
 
         if reconstructed_rows:
             reconstructed_df = pd.DataFrame(reconstructed_rows)
-            if 'Bet ID' in reconstructed_df.columns:
-                cols = ['Bet ID'] + [col for col in reconstructed_df.columns if col != 'Bet ID']
-                reconstructed_df = reconstructed_df[cols]
-            self.sheets.write_reconstructed_sheet(reconstructed_df)
+            self.sheets.write_reconstructed_sheet(reconstructed_df, f"{source_worksheet_name}_CORRIGIDA")
         
         await self.client.disconnect()
         logging.info("Ciclo de auditoria concluído.")
@@ -102,9 +105,8 @@ async def main():
     
     auditor = Auditor(config, sheets_svc, processor_svc)
     
-    aba_para_auditar = sheets_svc._get_current_month_worksheet_name()
-    logging.info(f"Iniciando Auditor Reconstrutor v13.1 na aba '{aba_para_auditar}'...")
-    await auditor.run_reconstruction(aba_para_auditar)
+    logging.info(f"Iniciando Auditor Reconstrutor na aba '{SheetsService.MAIN_WORKSHEET_NAME}'...")
+    await auditor.run_reconstruction(SheetsService.MAIN_WORKSHEET_NAME)
 
 if __name__ == "__main__":
     asyncio.run(main())

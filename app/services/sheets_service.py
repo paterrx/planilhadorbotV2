@@ -1,25 +1,23 @@
 # Arquivo: app/services/sheets_service.py
-# Versão: 12.0 - Lógica de get_pending_bets aprimorada com melhor parsing de data e logging.
+# Versão: Final - Lógica para aba principal "APOSTAS" e arquivamento automático.
 
 import json
 from datetime import datetime, timedelta
-
 import gspread
 import pandas as pd
 from babel.dates import format_date
-
-from app.config import Config
+import logging
+from app.config import config
 
 class SheetsService:
-    """Gerencia toda a comunicação com a planilha do Google Sheets."""
-
     EXPECTED_HEADER = [
         'Dia do Mês', 'Tipster', 'Casa de Apostas', 'Tipo de Aposta', 'Jogos',
         'Descrição da Aposta', 'Entrada', 'ESPORTE', 'ODD', 'Unidade/%', 
         'Situação', 'Bet ID', 'Message Link', 'Data Completa', 'Home Team ID', 'Away Team ID'
     ]
+    MAIN_WORKSHEET_NAME = "APOSTAS"
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: config):
         self.config = cfg
         self.client = self._authenticate()
         if not self.client:
@@ -31,139 +29,73 @@ class SheetsService:
             creds_json_str = self.config.GOOGLE_CREDENTIALS_JSON
             if not creds_json_str: raise ValueError("GOOGLE_CREDENTIALS_JSON no .env está vazio.")
             creds_json = json.loads(creds_json_str)
-            if 'private_key' in creds_json:
-                creds_json['private_key'] = creds_json['private_key'].replace('\\n', '\n')
+            creds_json['private_key'] = creds_json['private_key'].replace('\\n', '\n')
             return gspread.service_account_from_dict(creds_json)
         except Exception as e:
-            print(f"ERRO DE AUTENTICAÇÃO COM GOOGLE: {e}")
+            logging.error(f"ERRO DE AUTENTICAÇÃO COM GOOGLE: {e}")
             return None
-
-    def _get_current_month_worksheet_name(self):
-        return format_date(datetime.now(), "MMMM-YYYY", locale='pt_BR').capitalize()
 
     def _get_or_create_worksheet(self, title):
         try:
             worksheet = self.spreadsheet.worksheet(title)
-            header = worksheet.row_values(1)
-            if header != self.EXPECTED_HEADER:
-                worksheet.update([self.EXPECTED_HEADER], 'A1')
-                worksheet.format('A1:P1', {'textFormat': {'bold': True}})
-            return worksheet
         except gspread.exceptions.WorksheetNotFound:
-            print(f"AVISO: Aba '{title}' não encontrada. Criando uma nova...")
+            logging.warning(f"Aba '{title}' não encontrada. Criando uma nova...")
             worksheet = self.spreadsheet.add_worksheet(title=title, rows="1", cols=len(self.EXPECTED_HEADER))
+        
+        # Garante que o cabeçalho esteja correto
+        header = worksheet.row_values(1)
+        if header != self.EXPECTED_HEADER:
             worksheet.update([self.EXPECTED_HEADER], 'A1')
             worksheet.format('A1:P1', {'textFormat': {'bold': True}})
-            return worksheet
+        return worksheet
 
-    def get_worksheet(self, worksheet_name=None):
-        if worksheet_name is None:
-            worksheet_name = self._get_current_month_worksheet_name()
-        return self._get_or_create_worksheet(worksheet_name)
-
-    def get_all_bets_from_worksheet(self, worksheet_name):
+    def get_all_records_from_worksheet(self, worksheet_name):
         try:
             worksheet = self.spreadsheet.worksheet(worksheet_name)
-            all_records = worksheet.get_all_records()
-            if not all_records:
-                return pd.DataFrame()
-            
-            df = pd.DataFrame(all_records)
-            df['original_row'] = df.index + 2
-            return df
+            return worksheet.get_all_records()
         except gspread.exceptions.WorksheetNotFound:
-            print(f"ERRO: A aba '{worksheet_name}' não foi encontrada para leitura.")
-            return pd.DataFrame()
+            logging.warning(f"A aba '{worksheet_name}' não foi encontrada para leitura.")
+            return []
         except Exception as e:
-            print(f"Erro ao buscar todas as apostas da aba '{worksheet_name}': {e}")
-            return pd.DataFrame()
+            logging.error(f"Erro ao buscar todos os registros da aba '{worksheet_name}': {e}")
+            return []
 
     def get_pending_bets(self):
-        worksheet_name = self._get_current_month_worksheet_name()
-        all_bets = self.get_all_bets_from_worksheet(worksheet_name)
-        if all_bets.empty: return None
-
-        pending_bets = all_bets[all_bets['Situação'].str.strip().str.lower() == 'pendente'].copy()
+        all_records = self.get_all_records_from_worksheet(self.MAIN_WORKSHEET_NAME)
+        if not all_records: return None
         
-        if pending_bets.empty:
-            print("  -> Log: Nenhuma aposta com status 'Pendente' encontrada na planilha.")
-            return None
-            
-        print(f"  -> Log: Encontradas {len(pending_bets)} apostas com status 'Pendente'.")
+        df = pd.DataFrame(all_records)
+        if df.empty: return None
+
+        df['row_number'] = df.index + 2
+        
+        pending_bets = df[df['Situação'].astype(str).str.strip().str.lower() == 'pendente'].copy()
+        if pending_bets.empty: return None
 
         pending_bets['event_datetime'] = pd.to_datetime(pending_bets['Data Completa'], dayfirst=True, errors='coerce')
-        
         valid_dates_bets = pending_bets.dropna(subset=['event_datetime']).copy()
-        
-        if len(valid_dates_bets) < len(pending_bets):
-            print(f"  -> AVISO: {len(pending_bets) - len(valid_dates_bets)} apostas pendentes foram ignoradas por terem um formato de data inválido na coluna 'Data Completa'.")
-
-        if valid_dates_bets.empty: return None
 
         check_time = datetime.now() - timedelta(hours=self.config.RESULT_CHECK_HOURS_AGO)
-        past_pending_bets = valid_dates_bets[valid_dates_bets['event_datetime'] <= check_time].copy()
-        
-        print(f"  -> Log: Após filtro de tempo ({self.config.RESULT_CHECK_HOURS_AGO}h), {len(past_pending_bets)} apostas estão prontas para verificação.")
-        
-        if past_pending_bets.empty: return None
-
-        past_pending_bets.rename(columns={'original_row': 'row_number'}, inplace=True)
-        return past_pending_bets
-        
-    def write_reconstructed_sheet(self, df: pd.DataFrame):
-        try:
-            worksheet_title = f"APOSTAS_CORRIGIDA_{datetime.now().strftime('%Y%m%d_%H%M')}"
-            worksheet = self._get_or_create_worksheet(worksheet_title)
-            
-            print(f"Escrevendo {len(df)} linhas na nova aba '{worksheet_title}'...")
-            df_to_write = df.reindex(columns=self.EXPECTED_HEADER).fillna('')
-            worksheet.update([self.EXPECTED_HEADER] + df_to_write.values.tolist(), 'A1', value_input_option='USER_ENTERED')
-            print(f"SUCESSO! Planilha reconstruída salva na aba '{worksheet_title}'.")
-        except Exception as e:
-            print(f"ERRO ao escrever a planilha reconstruída: {e}")
-
-    def batch_update_cells(self, updates: list, worksheet_name=None):
-        if not updates: return
-        worksheet = self.get_worksheet(worksheet_name)
-        try:
-            header = worksheet.row_values(1)
-            col_map = {name: i + 1 for i, name in enumerate(header)}
-            batch_requests = []
-            for update in updates:
-                row, col_name, value = update.get('row'), update.get('col_name'), update.get('value')
-                if not all([row, col_name, value is not None]): continue
-                col_index = col_map.get(col_name)
-                if col_index:
-                    cell_a1 = gspread.utils.rowcol_to_a1(row, col_index)
-                    batch_requests.append({'range': cell_a1, 'values': [[value]]})
-            
-            if batch_requests:
-                worksheet.batch_update(batch_requests, value_input_option='USER_ENTERED')
-                print(f"  -> {len(updates)} células atualizadas na aba '{worksheet.title}' com sucesso.")
-        except Exception as e:
-            print(f"ERRO ao executar a atualização em lote na aba '{worksheet.title}': {e}")
-
-    def _format_value(self, value):
-        value_str = str(value or '')
-        return "'" + value_str if value_str.startswith("=") else value_str
+        return valid_dates_bets[valid_dates_bets['event_datetime'] <= check_time]
 
     def _format_json_to_row_data(self, bet_json, message_link, existing_bet_id=None, existing_status=None):
         bet_info = bet_json.get('data', bet_json)
         if not bet_info: return None
         
-        entry = bet_info.get('entradas', [bet_info])[0]
+        entry = bet_info.get('entradas', [{}])[0]
         
         data_evento_str = bet_info.get('data_evento_completa', "")
-        if not data_evento_str:
-            data_evento_str = datetime.now().strftime('%d/%m/%Y %H:%M')
-            
-        dia_do_mes = ''
-        try: dia_do_mes = datetime.strptime(data_evento_str.split(' ')[0], '%d/%m/%Y').day
-        except (ValueError, IndexError): dia_do_mes = datetime.now().day
+        if data_evento_str:
+            try:
+                dia_do_mes = datetime.strptime(data_evento_str.split(' ')[0], '%d/%m/%Y').day
+            except (ValueError, IndexError):
+                dia_do_mes = datetime.now().day
+        else:
+            dia_do_mes = datetime.now().day
         
         bet_id = existing_bet_id or f"bet_{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
 
-        row_data = {
+        return {
             'Dia do Mês': dia_do_mes,
             'Tipster': bet_info.get('tipster'),
             'Casa de Apostas': bet_info.get('casa_de_aposta'),
@@ -181,14 +113,87 @@ class SheetsService:
             'Home Team ID': bet_info.get('home_team_id'),
             'Away Team ID': bet_info.get('away_team_id')
         }
-        
-        return {k: self._format_value(v) for k, v in row_data.items()}
 
     def write_bet(self, bet_json, message_link):
-        worksheet = self.get_worksheet()
+        worksheet = self._get_or_create_worksheet(self.MAIN_WORKSHEET_NAME)
         row_data = self._format_json_to_row_data(bet_json, message_link)
         if not row_data: return
+        
+        ordered_row = [str(row_data.get(h, '')) for h in self.EXPECTED_HEADER]
+        worksheet.append_row(ordered_row, value_input_option='USER_ENTERED')
+        logging.info(f"Aposta para '{row_data.get('Jogos')}' planilhada com sucesso na aba '{worksheet.title}'.")
+    
+    def batch_update_cells(self, updates: list):
+        if not updates: return
+        worksheet = self._get_or_create_worksheet(self.MAIN_WORKSHEET_NAME)
+        try:
+            header = worksheet.row_values(1)
+            col_map = {name: i + 1 for i, name in enumerate(header)}
+            batch_requests = []
+            for update in updates:
+                row, col_name, value = update.get('row'), update.get('col_name'), update.get('value')
+                if not all([row, col_name, value is not None]): continue
+                col_index = col_map.get(col_name)
+                if col_index:
+                    cell_a1 = gspread.utils.rowcol_to_a1(row, col_index)
+                    batch_requests.append({'range': cell_a1, 'values': [[value]]})
+            
+            if batch_requests:
+                worksheet.batch_update(batch_requests, value_input_option='USER_ENTERED')
+                logging.info(f"{len(updates)} células atualizadas na aba '{worksheet.title}' com sucesso.")
+        except Exception as e:
+            logging.error(f"Erro ao executar a atualização em lote: {e}")
 
-        ordered_row = [row_data.get(h, '') for h in self.EXPECTED_HEADER]
-        worksheet.append_rows([ordered_row], value_input_option='USER_ENTERED', insert_data_option='INSERT_ROWS', table_range='A1')
-        print(f"Aposta para '{row_data.get('Jogos', 'N/A')}' planilhada com sucesso na aba '{worksheet.title}'.")
+    def write_reconstructed_sheet(self, df: pd.DataFrame, title: str):
+        worksheet = self._get_or_create_worksheet(title)
+        logging.info(f"Escrevendo {len(df)} linhas na aba de reconstrução '{title}'...")
+        df_to_write = df.reindex(columns=self.EXPECTED_HEADER).fillna('')
+        worksheet.update([self.EXPECTED_HEADER] + df_to_write.values.tolist(), 'A1', value_input_option='USER_ENTERED')
+        logging.info(f"Planilha reconstruída salva com sucesso na aba '{title}'.")
+        
+    def archive_completed_bets(self):
+        logging.info("Iniciando processo de arquivamento de apostas finalizadas...")
+        main_sheet = self._get_or_create_worksheet(self.MAIN_WORKSHEET_NAME)
+        all_records = main_sheet.get_all_records()
+        if not all_records:
+            logging.info("Nenhuma aposta para arquivar.")
+            return
+
+        df = pd.DataFrame(all_records)
+        df['row_number'] = df.index + 2
+        
+        completed_statuses = ['green', 'red', 'revisão manual', 'erro na análise', 'erro ia']
+        completed_bets = df[df['Situação'].str.lower().isin(completed_statuses)].copy()
+        if completed_bets.empty:
+            logging.info("Nenhuma aposta finalizada para arquivar.")
+            return
+
+        completed_bets['event_date'] = pd.to_datetime(completed_bets['Data Completa'], dayfirst=True, errors='coerce')
+        completed_bets.dropna(subset=['event_date'], inplace=True)
+        
+        bets_by_month = completed_bets.groupby(completed_bets['event_date'].dt.to_period('M'))
+        
+        rows_to_delete = []
+        for period, bets_in_month in bets_by_month:
+            month_sheet_name = format_date(period.to_timestamp(), "MMMM-YYYY", locale='pt_BR').capitalize()
+            if month_sheet_name == self.MAIN_WORKSHEET_NAME: continue # Não arquiva na própria aba
+            
+            logging.info(f"Arquivando {len(bets_in_month)} apostas para '{month_sheet_name}'...")
+            month_sheet = self._get_or_create_worksheet(month_sheet_name)
+            
+            bets_to_write_df = bets_in_month.reindex(columns=self.EXPECTED_HEADER).fillna('')
+            rows_to_append = bets_to_write_df.values.tolist()
+            month_sheet.append_rows(rows_to_append, value_input_option='USER_ENTERED')
+            
+            rows_to_delete.extend(bets_in_month['row_number'].tolist())
+
+        if rows_to_delete:
+            logging.info(f"Removendo {len(rows_to_delete)} linhas arquivadas da aba '{self.MAIN_WORKSHEET_NAME}'...")
+            # Deleta as linhas em lotes, da última para a primeira
+            for row_num in sorted(rows_to_delete, reverse=True):
+                try:
+                    main_sheet.delete_rows(row_num)
+                except Exception as e:
+                    logging.error(f"Erro ao deletar linha {row_num}: {e}")
+        
+        logging.info("Processo de arquivamento concluído.")
