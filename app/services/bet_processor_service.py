@@ -1,5 +1,5 @@
 # Arquivo: app/services/bet_processor_service.py
-# Versão: 2.3 - Adicionada "blindagem" contra JSONs malformados da IA (KeyError).
+# Versão: 2.4 - Lógica final à prova de falhas, com tratamento de KeyError.
 
 import logging
 import json
@@ -25,15 +25,21 @@ class BetProcessorService:
             return None, "Ignored"
 
         bet_data = initial_analysis.get('data', {})
-        entry = bet_data.get('entradas', [{}])[0]
         
-        # --- NOVA BLINDAGEM ---
-        # Verifica se a extração inicial conseguiu encontrar os dados mínimos necessários.
-        if not entry or 'jogos' not in entry:
-            logging.error(f"A análise inicial da IA para a msg {message.id} falhou em extrair a chave 'jogos'. Pulando aposta.")
-            bet_data['home_team_id'] = 'ERRO_IA'
-            bet_data['away_team_id'] = 'ERRO_IA'
+        # --- BLINDAGEM REFORÇADA ---
+        # Garante que a estrutura mínima exista antes de prosseguir.
+        if not bet_data or 'entradas' not in bet_data or not bet_data['entradas']:
+            logging.error(f"A análise da IA para a msg {message.id} retornou sem o campo 'entradas'. Pulando.")
+            # Retorna um objeto de aposta mínimo para evitar que a escrita na planilha quebre
+            bet_data['situacao'] = 'Erro IA'
             return {'data': bet_data}, "ProcessingError"
+            
+        entry = bet_data['entradas'][0]
+
+        if 'jogos' not in entry or not entry['jogos']:
+             logging.error(f"A análise da IA para a msg {message.id} retornou sem a chave 'jogos'. Pulando.")
+             bet_data['situacao'] = 'Erro IA'
+             return {'data': bet_data}, "ProcessingError"
         # --- FIM DA BLINDAGEM ---
 
         post_date_str = message.date.strftime('%d/%m/%Y %H:%M')
@@ -41,7 +47,7 @@ class BetProcessorService:
         # 2. IA Gera a Query de Busca
         search_query = await self.ai.generate_search_query(entry, post_date_str)
         if not search_query:
-            logging.warning(f"IA não conseguiu gerar uma query de busca para msg {message.id}. Usando dados originais.")
+            logging.warning(f"IA não conseguiu gerar uma query de busca para msg {message.id}.")
             bet_data['home_team_id'] = ''
             bet_data['away_team_id'] = ''
             return {'data': bet_data}, "OriginalData"
@@ -64,11 +70,11 @@ class BetProcessorService:
             if reason == "Success" and fixture:
                 bet_data['home_team_id'] = fixture['teams']['home']['id']
                 bet_data['away_team_id'] = fixture['teams']['away']['id']
-                logging.info(f"IDs da API-Football encontrados para msg {message.id}: {bet_data['home_team_id']}, {bet_data['away_team_id']}")
+                logging.info(f"IDs da API-Football encontrados: {bet_data['home_team_id']}, {bet_data['away_team_id']}")
             else:
                 bet_data['home_team_id'] = "NAO_ENCONTRADO_API"
                 bet_data['away_team_id'] = "NAO_ENCONTRADO_API"
-                logging.warning(f"Partida validada pela IA não encontrada na API-Football (Msg ID: {message.id}). Razão: {reason}")
+                logging.warning(f"Partida validada não encontrada na API-Football. Razão: {reason}")
         else:
             logging.warning(f"Pesquisa Ativa falhou para msg {message.id}. Usando dados originais.")
             bet_data['home_team_id'] = ''
