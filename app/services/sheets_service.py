@@ -1,5 +1,5 @@
 # Arquivo: app/services/sheets_service.py
-# Versão: 11.0 - Funções de escrita refatoradas para aceitar um dicionário de aposta já enriquecido.
+# Versão: 12.0 - Lógica de get_pending_bets aprimorada com melhor parsing de data e logging.
 
 import json
 from datetime import datetime, timedelta
@@ -39,6 +39,7 @@ class SheetsService:
             return None
 
     def _get_current_month_worksheet_name(self):
+        # A data atual é 19/07/2025, então o nome da aba será 'Julho-2025'
         return format_date(datetime.now(), "MMMM-YYYY", locale='pt_BR').capitalize()
 
     def _get_or_create_worksheet(self, title):
@@ -64,15 +65,13 @@ class SheetsService:
     def get_all_bets_from_worksheet(self, worksheet_name):
         try:
             worksheet = self.spreadsheet.worksheet(worksheet_name)
-            all_values = worksheet.get_all_values()
-            if len(all_values) < 2: 
-                return pd.DataFrame(columns=self.EXPECTED_HEADER)
+            all_records = worksheet.get_all_records() # Usar get_all_records é mais robusto para DataFrame
+            if not all_records:
+                return pd.DataFrame()
             
-            header = all_values[0]
-            data = all_values[1:]
-            
-            df = pd.DataFrame(data, columns=header)
-            df['original_index'] = df.index
+            df = pd.DataFrame(all_records)
+            # Adiciona o número da linha original (get_all_records header é a linha 1, dados começam na 2)
+            df['original_row'] = df.index + 2
             return df
         except gspread.exceptions.WorksheetNotFound:
             print(f"ERRO: A aba '{worksheet_name}' não foi encontrada para leitura.")
@@ -82,25 +81,46 @@ class SheetsService:
             return pd.DataFrame()
 
     def get_pending_bets(self):
+        """Busca apostas pendentes da aba do mês atual que já deveriam ter ocorrido."""
         worksheet_name = self._get_current_month_worksheet_name()
         all_bets = self.get_all_bets_from_worksheet(worksheet_name)
         if all_bets.empty: return None
 
-        pending_bets = all_bets[all_bets['Situação'].str.lower() == 'pendente'].copy()
-        if pending_bets.empty: return None
+        # Filtra por apostas com situação 'Pendente' (case-insensitive)
+        pending_bets = all_bets[all_bets['Situação'].str.strip().str.lower() == 'pendente'].copy()
         
-        pending_bets['event_datetime'] = pd.to_datetime(pending_bets['Data Completa'], format='%d/%m/%Y %H:%M', errors='coerce')
-        pending_bets.dropna(subset=['event_datetime'], inplace=True)
+        if pending_bets.empty:
+            print("  -> Log: Nenhuma aposta com status 'Pendente' encontrada na planilha.")
+            return None
+            
+        print(f"  -> Log: Encontradas {len(pending_bets)} apostas com status 'Pendente'.")
 
-        now_with_margin = datetime.now() - timedelta(hours=3)
-        past_pending_bets = pending_bets[pending_bets['event_datetime'] <= now_with_margin].copy()
+        # Tenta converter a coluna 'Data Completa' para datetime, sendo mais flexível
+        pending_bets['event_datetime'] = pd.to_datetime(pending_bets['Data Completa'], dayfirst=True, errors='coerce')
+        
+        # Remove linhas onde a data não pôde ser convertida
+        valid_dates_bets = pending_bets.dropna(subset=['event_datetime']).copy()
+        
+        if len(valid_dates_bets) < len(pending_bets):
+            print(f"  -> AVISO: {len(pending_bets) - len(valid_dates_bets)} apostas pendentes foram ignoradas por terem um formato de data inválido na coluna 'Data Completa'.")
+
+        if valid_dates_bets.empty: return None
+
+        # Filtra para pegar apenas apostas de eventos que já terminaram (considerando uma margem de segurança)
+        # Uma partida dura em média 2 horas. Uma margem de 2.5 horas é segura.
+        check_time = datetime.now() - timedelta(hours=2, minutes=30)
+        past_pending_bets = valid_dates_bets[valid_dates_bets['event_datetime'] <= check_time].copy()
+        
+        print(f"  -> Log: Após filtro de data/hora, {len(past_pending_bets)} apostas estão prontas para verificação.")
         
         if past_pending_bets.empty: return None
 
-        past_pending_bets['row_number'] = past_pending_bets['original_index'] + 2
+        # Renomeia a coluna para corresponder ao que o results_updater espera
+        past_pending_bets.rename(columns={'original_row': 'row_number'}, inplace=True)
         return past_pending_bets
         
     def write_reconstructed_sheet(self, df: pd.DataFrame):
+        # ... (código existente sem alterações) ...
         try:
             worksheet_title = f"APOSTAS_CORRIGIDA_{datetime.now().strftime('%Y%m%d_%H%M')}"
             worksheet = self._get_or_create_worksheet(worksheet_title)
@@ -113,6 +133,7 @@ class SheetsService:
             print(f"ERRO ao escrever a planilha reconstruída: {e}")
 
     def batch_update_cells(self, updates: list, worksheet_name=None):
+        # ... (código existente sem alterações) ...
         if not updates: return
         worksheet = self.get_worksheet(worksheet_name)
         try:
@@ -134,10 +155,12 @@ class SheetsService:
             print(f"ERRO ao executar a atualização em lote na aba '{worksheet.title}': {e}")
 
     def _format_value(self, value):
+        # ... (código existente sem alterações) ...
         value_str = str(value or '')
         return "'" + value_str if value_str.startswith("=") else value_str
 
     def _format_json_to_row_data(self, bet_json, message_link, existing_bet_id=None, existing_status=None):
+        # ... (código existente sem alterações) ...
         bet_info = bet_json.get('data', bet_json)
         if not bet_info: return None
         
@@ -168,15 +191,15 @@ class SheetsService:
             'Bet ID': bet_id,
             'Message Link': message_link,
             'Data Completa': data_evento_str,
-            'Home Team ID': bet_info.get('home_team_id'), # Busca o ID do dicionário
-            'Away Team ID': bet_info.get('away_team_id')  # Busca o ID do dicionário
+            'Home Team ID': bet_info.get('home_team_id'),
+            'Away Team ID': bet_info.get('away_team_id')
         }
         
         return {k: self._format_value(v) for k, v in row_data.items()}
 
     def write_bet(self, bet_json, message_link):
+        # ... (código existente sem alterações) ...
         worksheet = self.get_worksheet()
-        # A função agora só precisa do JSON enriquecido e do link
         row_data = self._format_json_to_row_data(bet_json, message_link)
         if not row_data: return
 
