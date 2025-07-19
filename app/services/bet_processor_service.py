@@ -1,5 +1,5 @@
 # Arquivo: app/services/bet_processor_service.py
-# Versão: 2.2 - Adicionada "blindagem" contra JSONs malformados da IA (KeyError).
+# Versão: 2.3 - Adicionada "blindagem" contra JSONs malformados da IA (KeyError).
 
 import logging
 import json
@@ -31,7 +31,6 @@ class BetProcessorService:
         # Verifica se a extração inicial conseguiu encontrar os dados mínimos necessários.
         if not entry or 'jogos' not in entry:
             logging.error(f"A análise inicial da IA para a msg {message.id} falhou em extrair a chave 'jogos'. Pulando aposta.")
-            # Retorna os dados que temos para que não quebre a escrita na planilha, mas sem enriquecimento.
             bet_data['home_team_id'] = 'ERRO_IA'
             bet_data['away_team_id'] = 'ERRO_IA'
             return {'data': bet_data}, "ProcessingError"
@@ -42,7 +41,7 @@ class BetProcessorService:
         # 2. IA Gera a Query de Busca
         search_query = await self.ai.generate_search_query(entry, post_date_str)
         if not search_query:
-            logging.warning("IA não conseguiu gerar uma query de busca para msg {message.id}. Usando dados originais.")
+            logging.warning(f"IA não conseguiu gerar uma query de busca para msg {message.id}. Usando dados originais.")
             bet_data['home_team_id'] = ''
             bet_data['away_team_id'] = ''
             return {'data': bet_data}, "OriginalData"
