@@ -16,14 +16,15 @@ class Config:
     GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
     SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
     API_FOOTBALL_KEY = os.getenv('API_FOOTBALL_KEY')
-    TAVILY_API_KEY = os.getenv('TAVILY_API_KEY') # NOVO
+    TAVILY_API_KEY = os.getenv('TAVILY_API_KEY')
     GOOGLE_CREDENTIALS_JSON = os.getenv('GOOGLE_CREDENTIALS_JSON')
     
     # --- Configurações de Comportamento ---
     RESULT_CHECK_HOURS_AGO = float(os.getenv('RESULT_CHECK_HOURS_AGO', 2.5))
     
     # --- Caminhos de Arquivos ---
-    DB_PATH = os.path.join(PROJECT_ROOT, 'data', 'bets.db')
+    DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
+    DB_PATH = os.path.join(DATA_DIR, 'bets.db')
     PROMPTS_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
     PROMPT_PATH = os.path.join(PROMPTS_DIR, 'main_prompt.txt')
     QUERY_GENERATOR_PROMPT_PATH = os.path.join(PROMPTS_DIR, 'query_generator_prompt.txt')
@@ -43,6 +44,9 @@ class Config:
                 self.TELEGRAM_CHANNEL_IDS = json.load(f).get('telegram_channel_ids', [])
         except FileNotFoundError:
             self.TELEGRAM_CHANNEL_IDS = []
+        
+        # Garante que o diretório de dados exista
+        os.makedirs(self.DATA_DIR, exist_ok=True)
 
     def _load_context_file(self, context_dir, filename):
         filepath = os.path.join(context_dir, filename)
