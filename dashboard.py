@@ -1,5 +1,5 @@
 # Arquivo: dashboard.py
-# Descrição: Dashboard interativo para gerenciar os canais do Telegram monitorados.
+# Versão: 2.0 - Corrigida a lógica de conexão assíncrona com o Telethon.
 
 import streamlit as st
 import json
@@ -7,33 +7,50 @@ import os
 import asyncio
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
+from telethon.errors.rpcerrorlist import ApiIdInvalidError, PhoneCodeInvalidError
 from app.config import config
 
+# --- Constantes e Configurações ---
 CONFIG_PATH = os.path.join(config.PROJECT_ROOT, 'config.json')
 SESSION_STRING = config.TELETHON_SESSION_STRING
 API_ID = config.TELEGRAM_API_ID
 API_HASH = config.TELEGRAM_API_HASH
 
+# --- Funções de Lógica ---
+
 def load_monitored_config():
+    """Carrega a configuração atual do config.json."""
     if not os.path.exists(CONFIG_PATH):
         return []
     with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-        return data.get('telegram_channel_ids', [])
+        try:
+            data = json.load(f)
+            return data.get('telegram_channel_ids', [])
+        except json.JSONDecodeError:
+            return []
 
 def save_monitored_config(channel_ids):
+    """Salva a nova lista de IDs no config.json."""
     with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
         json.dump({'telegram_channel_ids': channel_ids}, f, indent=4)
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600) # Cache por 1 hora para não reconectar toda hora
 def get_all_my_channels():
+    """Conecta ao Telegram e busca todos os canais/grupos do usuário."""
     st.info("Buscando sua lista de canais no Telegram... Isso pode levar um momento.")
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    
+    # A biblioteca telethon.sync já gerencia o loop de eventos para nós.
+    # A lógica foi simplificada para a forma correta de usar a biblioteca.
     with TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) as client:
-        dialogs = client.loop.run_until_complete(client.get_dialogs())
-    channels = {f"{dialog.title} (ID: {dialog.id})": dialog.id for dialog in dialogs if dialog.is_channel}
+        dialogs = client.get_dialogs()
+    
+    channels = {
+        f"{dialog.title} (ID: {dialog.id})": dialog.id 
+        for dialog in dialogs if dialog.is_channel
+    }
     return channels
+
+# --- Interface do Dashboard ---
 
 st.set_page_config(page_title="Gerenciador de Canais", layout="wide")
 st.title("🚀 Dashboard de Gerenciamento de Canais - Planilhador-Gemini")
@@ -45,6 +62,7 @@ else:
     try:
         all_channels_map = get_all_my_channels()
         monitored_ids = load_monitored_config()
+
         st.sidebar.header("Canais Monitorados Atualmente")
         
         monitored_channels_names = []
@@ -57,11 +75,12 @@ else:
             st.sidebar.warning("Nenhum canal está sendo monitorado.")
 
         st.divider()
+        
         st.subheader("Selecione os Canais para Monitorar")
         
         selected_channels = st.multiselect(
             label="Escolha um ou mais canais da sua lista. Os já selecionados estão marcados.",
-            options=all_channels_map.keys(),
+            options=sorted(list(all_channels_map.keys())), # Ordena para melhor visualização
             default=monitored_channels_names
         )
 
@@ -71,6 +90,8 @@ else:
             st.success("✅ Configuração salva com sucesso! O robô principal irá atualizar o monitoramento em breve.")
             st.rerun()
 
+    except ApiIdInvalidError:
+        st.error("Ocorreu um erro ao conectar com o Telegram: API_ID ou API_HASH inválidos. Verifique suas variáveis de ambiente.")
     except Exception as e:
-        st.error(f"Ocorreu um erro ao conectar com o Telegram: {e}")
-        st.warning("Verifique se sua TELETHON_SESSION_STRING está correta e válida.")
+        st.error(f"Ocorreu um erro inesperado ao conectar com o Telegram: {e}")
+        st.warning("Verifique se sua TELETHON_SESSION_STRING está correta e válida. Se o erro persistir, pode ser necessário gerar uma nova string.")

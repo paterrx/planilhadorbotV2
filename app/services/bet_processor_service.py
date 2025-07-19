@@ -1,5 +1,5 @@
 # Arquivo: app/services/bet_processor_service.py
-# Versão: 1.0 - O motor de processamento unificado e inteligente.
+# Versão: 1.1 - Resiliente à falha do Sofascore.
 
 import logging
 from telethon.tl.custom import Message
@@ -25,13 +25,14 @@ class BetProcessorService:
         bet_data = initial_analysis.get('data', {})
         entry = bet_data.get('entradas', [{}])[0]
         
+        # Tenta obter contexto do Sofascore, mas não depende mais dele
         jogos_brutos = entry.get('jogos_concatenados', entry.get('jogos', ''))
         sofascore_context = self.sofascore.get_team_details_from_search(jogos_brutos.split(' vs ')[0])
-
+        
         data_to_validate = {
             "texto_original_aposta": entry,
             "data_postagem": message.date.strftime('%d/%m/%Y %H:%M'),
-            "contexto_sofascore": sofascore_context or "Nenhum."
+            "contexto_sofascore": sofascore_context or "Nenhum contexto adicional encontrado."
         }
         
         validated_data = await self.ai.validate_bet_data(data_to_validate)
