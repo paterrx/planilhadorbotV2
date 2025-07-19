@@ -1,5 +1,5 @@
 # Arquivo: app/services/bet_processor_service.py
-# Versão: 2.5 - Corrigido TypeError na chamada do google_search_service.
+# Versão: 2.6 - Corrigido TypeError final na chamada do google_search_service.
 
 import logging
 import json
@@ -27,15 +27,15 @@ class BetProcessorService:
         bet_data = initial_analysis.get('data', {})
         entry = bet_data.get('entradas', [{}])[0]
         
-        if not entry or 'jogos' not in entry or not entry['jogos']:
-            logging.error(f"A análise da IA para a msg {message.id} falhou em extrair a chave 'jogos'. Pulando aposta.")
+        jogos_text = entry.get('jogos')
+        if not jogos_text:
+            logging.error(f"A chave 'jogos' não foi encontrada na análise da msg {message.id}. Pulando esta aposta.")
             bet_data['situacao'] = 'Erro IA (sem jogos)'
             return {'data': bet_data}, "ProcessingError"
 
         post_date_str = message.date.strftime('%d/%m/%Y %H:%M')
 
         # 2. IA Gera a Query de Busca
-        jogos_text = entry.get('jogos')
         search_query = await self.ai.generate_search_query(jogos_text, post_date_str)
         if not search_query:
             logging.warning(f"IA não conseguiu gerar uma query de busca para msg {message.id}. Usando dados originais.")
@@ -45,7 +45,7 @@ class BetProcessorService:
 
         # 3. Executa a Busca na Web
         # CORREÇÃO APLICADA AQUI: Adicionado o .search()
-        search_results = self.google_search(search_query)
+        search_results = self.google_search.search(search_query)
 
         # 4. IA Analisa os Resultados da Busca para Validar
         validated_data = await self.ai.analyze_search_results(entry, search_query, search_results, post_date_str)
