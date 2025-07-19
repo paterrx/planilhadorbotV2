@@ -1,5 +1,5 @@
 # Arquivo: app/auditor.py
-# Versão: 10.1 - Lógica final com reconstrução segura usando JSON plano.
+# Versão: 11.0 - Lógica ajustada para auditar a aba do mês atual dinamicamente.
 
 import asyncio
 import pandas as pd
@@ -33,12 +33,15 @@ class Auditor:
                 temp_map[entity.title] = entity.id
             except Exception as e:
                 print(f"  -> AVISO: Não foi possível acessar o canal com ID {channel_id}. Erro: {e}")
+        
+        # Define um canal de fallback para buscas, caso o tipster não seja encontrado
         peixe_esperto_name = "Peixe Esperto - Águas"
         for channel_title, channel_id in temp_map.items():
             if peixe_esperto_name.lower() in channel_title.lower():
                 self.fallback_channel_id = channel_id
                 print(f"  -> Canal de fallback definido para '{channel_title}' (ID: {self.fallback_channel_id})")
                 break
+
         valid_tipsters = [t for t in config.VALID_TIPSTERS if t and t.strip() and t.strip() != '-']
         for tipster_name in valid_tipsters:
             found = False
@@ -62,21 +65,34 @@ class Auditor:
                     return await self.client.get_messages(channel_id, ids=msg_id)
             except (ValueError, MessageIdInvalidError): pass
             except Exception as e: print(f"    -> Erro ao buscar por link {link}: {e}")
+        
         tipster_name = bet_row.get('Tipster')
         channel_id = self.tipster_channel_map.get(tipster_name, self.fallback_channel_id)
         if not channel_id: return None
+        
         search_query = bet_row.get('Entrada') or bet_row.get('Descrição da Aposta') or bet_row.get('Jogos')
         if search_query: search_query = " ".join(str(search_query).split()[:4])
         else: return None
+        
         try:
             async for message in self.client.iter_messages(channel_id, search=search_query, limit=5):
                  return message
-        except Exception: return None
+        except SearchQueryEmptyError:
+            print(f"    -> Query de busca vazia ou inválida para '{search_query}'.")
+            return None
+        except Exception as e:
+            print(f"    -> Erro na busca por texto no Telegram: {e}")
+            return None
         return None
 
     async def run_reconstruction(self, source_worksheet_name: str):
         print("Conectando ao Telegram para auditoria...")
         await self.client.connect()
+        if not await self.client.is_user_authorized():
+            print("ERRO: Cliente do Telegram não autorizado. Verifique a sessão.")
+            await self.client.disconnect()
+            return
+            
         await self._build_tipster_map()
         
         original_df = self.sheets.get_all_bets_from_worksheet(source_worksheet_name)
@@ -87,7 +103,6 @@ class Auditor:
             
         print(f"\n--- Auditoria iniciada. Lendo {len(original_df)} linhas da aba '{source_worksheet_name}'. ---")
         reconstructed_rows_data = []
-        # Garante que Bet ID seja string para evitar erros no drop_duplicates
         original_df['Bet ID'] = original_df['Bet ID'].astype(str)
         unique_bets_df = original_df.drop_duplicates(subset='Bet ID', keep='first')
 
@@ -99,7 +114,7 @@ class Auditor:
                 print(f"\n-> Auditando Aposta ID {bet_id}...")
                 original_message = await self.find_original_message(bet_row)
                 if not original_message:
-                    print(f"  -> Mensagem não encontrada. Mantendo a primeira linha original.")
+                    print(f"  -> Mensagem original não encontrada no Telegram. Mantendo a primeira linha original.")
                     reconstructed_rows_data.append(bet_row.to_dict())
                     continue
 
@@ -110,10 +125,11 @@ class Auditor:
                     print(f"  -> Reanálise não resultou em 'nova_aposta'. Mantendo dados originais.")
                     reconstructed_rows_data.append(bet_row.to_dict())
                     continue
-
+                
+                if 'data' not in analysis_result: analysis_result['data'] = {}
+                
                 message_link = f"https://t.me/c/{str(original_message.chat_id).replace('-100', '')}/{original_message.id}"
                 
-                # A função _format_json_to_row_data agora lida com o JSON plano
                 row_data = self.sheets._format_json_to_row_data(
                     analysis_result, message_link,
                     existing_bet_id=bet_id,
@@ -135,17 +151,20 @@ class Auditor:
             self.sheets.write_reconstructed_sheet(reconstructed_df)
         else:
             print("\nNenhuma linha foi processada para reconstrução.")
+        
         await self.client.disconnect()
         print("\nCiclo de auditoria e reconstrução concluído.")
 
 async def main():
-    ABA_PARA_AUDITAR = "APOSTAS"
-    print(f"Iniciando Auditor Reconstrutor na aba '{ABA_PARA_AUDITAR}'...")
-    ai_service = AIService(config)
+    # MODIFICADO: Agora busca dinamicamente o nome da aba do mês atual
     sheets_service = SheetsService(config)
+    aba_para_auditar = sheets_service._get_current_month_worksheet_name()
+    
+    print(f"Iniciando Auditor Reconstrutor na aba '{aba_para_auditar}'...")
+    ai_service = AIService(config)
     api_football_service = ApiFootballService(config, ai_service)
     auditor = Auditor(config, sheets_service, ai_service, api_football_service)
-    await auditor.run_reconstruction(ABA_PARA_AUDITAR)
+    await auditor.run_reconstruction(aba_para_auditar)
 
 if __name__ == "__main__":
     asyncio.run(main())
