@@ -27,6 +27,7 @@ class Config:
     DB_PATH = os.path.join(DATA_DIR, 'bets.db')
     PROMPTS_DIR = os.path.join(os.path.dirname(__file__), 'prompts')
     PROMPT_PATH = os.path.join(PROMPTS_DIR, 'main_prompt.txt')
+    VALIDATION_PROMPT_PATH = os.path.join(PROMPTS_DIR, 'validation_prompt.txt')
     QUERY_GENERATOR_PROMPT_PATH = os.path.join(PROMPTS_DIR, 'query_generator_prompt.txt')
     FINAL_ANALYSIS_PROMPT_PATH = os.path.join(PROMPTS_DIR, 'final_analysis_prompt.txt')
     CONTEXT_DIR = os.path.join(os.path.dirname(__file__), 'context')
