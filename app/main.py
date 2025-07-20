@@ -1,5 +1,5 @@
 # Arquivo: app/main.py
-# Versão: 14.3 - Corrigida a instanciação do BetProcessorService.
+# Versão: 14.4 - Corrigido TypeError na instanciação do BetProcessorService.
 
 import asyncio
 import logging
@@ -15,14 +15,13 @@ from app.services.db_service import DbService
 from app.services.ai_service import AIService
 from app.services.sheets_service import SheetsService
 from app.services.api_football_service import ApiFootballService
-from app.services.google_search_service import GoogleSearchService
 from app.services.bet_processor_service import BetProcessorService
+# A importação do Google Search_service não é mais necessária aqui.
 
 # --- Lógica de Gerenciamento Dinâmico de Canais ---
 current_monitored_channels = set()
 
 def load_channels_from_config():
-    """Lê o arquivo config.json e retorna a lista de IDs de canais."""
     config_path = os.path.join(config.PROJECT_ROOT, 'config.json')
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -33,7 +32,6 @@ def load_channels_from_config():
         return set()
 
 async def config_reloader_task(client: TelegramClient):
-    """Tarefa que roda em segundo plano para verificar mudanças no config.json."""
     global current_monitored_channels
     logging.info("[Supervisor] Iniciado. Verificando config.json a cada 60 segundos.")
     
@@ -44,12 +42,10 @@ async def config_reloader_task(client: TelegramClient):
         if new_channel_ids != current_monitored_channels:
             logging.warning(f"[Supervisor] Mudança detectada no config.json! Atualizando canais.")
             
-            # Remove handlers para canais que não estão mais na lista
             channels_to_remove = current_monitored_channels - new_channel_ids
             for channel_id in channels_to_remove:
                 client.remove_event_handler(handle_new_message, events.NewMessage(chats=[channel_id]))
             
-            # Adiciona handlers para novos canais
             channels_to_add = new_channel_ids - current_monitored_channels
             for channel_id in channels_to_add:
                 client.add_event_handler(handle_new_message, events.NewMessage(chats=[channel_id]))
@@ -62,8 +58,8 @@ db = DbService(config)
 ai = AIService(config)
 sheets = SheetsService(config)
 api_football = ApiFootballService(config, ai)
-google_search_svc = GoogleSearchService()
-processor = BetProcessorService(ai, api_football, google_search_svc)
+# CORREÇÃO: Removido o Google Search_svc daqui.
+processor = BetProcessorService(ai, api_football)
 
 # --- Cliente Telethon ---
 if not config.TELETHON_SESSION_STRING:
@@ -88,10 +84,9 @@ async def handle_new_message(event):
     logging.info(f"--- Processamento da Mensagem {message_id} Concluído ---")
 
 async def main():
-    logging.info("Iniciando o PlanilhadorBot v14.3 (Supervisor Corrigido)...")
+    logging.info("Iniciando o PlanilhadorBot v14.4 (Correção Final)...")
     db.setup_database()
     
-    # Adiciona os handlers iniciais
     global current_monitored_channels
     current_monitored_channels = load_channels_from_config()
     client.add_event_handler(handle_new_message, events.NewMessage(chats=list(current_monitored_channels)))
@@ -99,7 +94,6 @@ async def main():
     await client.start()
     logging.info("Bot conectado e pronto.")
     
-    # Inicia a tarefa do supervisor
     asyncio.create_task(config_reloader_task(client))
     
     logging.info(f"Monitorando {len(current_monitored_channels)} canais dinamicamente...")

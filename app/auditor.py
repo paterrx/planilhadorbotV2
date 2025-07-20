@@ -1,5 +1,5 @@
 # Arquivo: app/auditor.py
-# Versão: Final - Sem limite de lote, focado na aba "APOSTAS".
+# Versão: 14.1 - Corrigido TypeError na instanciação do BetProcessorService.
 
 import asyncio
 import logging
@@ -15,8 +15,8 @@ from app.config import config
 from app.services.ai_service import AIService
 from app.services.sheets_service import SheetsService
 from app.services.api_football_service import ApiFootballService
-from app.services.google_search_service import GoogleSearchService
 from app.services.bet_processor_service import BetProcessorService
+# A importação do Google Search_service não é mais necessária aqui.
 
 class Auditor:
     def __init__(self, cfg, sheets_svc, processor):
@@ -37,10 +37,8 @@ class Auditor:
                     channel_id = int("-100" + match.group(1))
                     msg_id = int(match.group(2))
                     return await self.client.get_messages(channel_id, ids=msg_id)
-            except (ValueError, MessageIdInvalidError):
-                logging.warning(f"Link inválido ou mensagem não encontrada: {link}")
-            except Exception as e:
-                logging.error(f"Erro inesperado ao buscar por link {link}: {e}")
+            except Exception:
+                return None
         return None
 
     async def run_reconstruction(self, source_worksheet_name: str):
@@ -100,8 +98,8 @@ async def main():
     sheets_svc = SheetsService(config)
     ai_svc = AIService(config)
     api_football_svc = ApiFootballService(config, ai_svc)
-    google_search_svc = GoogleSearchService()
-    processor_svc = BetProcessorService(ai_svc, api_football_svc, google_search_svc)
+    # CORREÇÃO: Removido o Google Search_svc daqui.
+    processor_svc = BetProcessorService(ai_svc, api_football_svc)
     
     auditor = Auditor(config, sheets_svc, processor_svc)
     
